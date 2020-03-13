@@ -1,11 +1,13 @@
 import keras
+from pickle import load
 from pickle import dump
 from numpy import array
-from pickle import load
+from numpy import argmax
+from keras.utils import plot_model
+from keras.models import load_model
+from keras.utils import to_categorical
 from keras.preprocessing.text import Tokenizer
 from keras.preprocessing.sequence import pad_sequences
-from keras.utils import to_categorical
-from keras.utils import plot_model
 from keras.models import Model
 from keras.layers import Input
 from keras.layers import Dense
@@ -14,6 +16,9 @@ from keras.layers import Embedding
 from keras.layers import Dropout
 from keras.layers.merge import add
 from keras.callbacks import ModelCheckpoint
+from nltk.translate.bleu_score import corpus_bleu
+from keras.preprocessing.sequence import pad_sequences
+
 
 def load_doc(filename):
 	"""
@@ -23,6 +28,7 @@ def load_doc(filename):
 	text = file.read()
 	file.close()
 	return text
+
 
 def load_set(filename):
 	"""
@@ -37,6 +43,7 @@ def load_set(filename):
 		identifier = line.split('.')[0]
 		dataset.append(identifier)
 	return set(dataset)
+
 
 def load_clean_descriptions(filename, dataset):
 	"""
@@ -54,6 +61,7 @@ def load_clean_descriptions(filename, dataset):
 			desc = 'startseq ' + ' '.join(image_desc) + ' endseq'		
 			descriptions[image_id].append(desc)
 	return descriptions
+
 
 def load_photo_features(filename, dataset):
 	"""
@@ -95,6 +103,7 @@ def max_length(descriptions):
 	lines = to_lines(descriptions)
 	return max(len(d.split()) for d in lines)
 
+
 def create_sequences(tokenizer, max_length, desc_list, 
 					 photo, vocab_size):
 	"""
@@ -119,9 +128,30 @@ def create_sequences(tokenizer, max_length, desc_list,
 	return array(X1), array(X2), array(y)
 
 
-def define_model(vocab_size, max_length):
+def create_all_sequences(tokenizer, max_length, descriptions, photos, vocab_size):
+	X1, X2, y = list(), list(), list()
+	# walk through each image identifier
+	for key, desc_list in descriptions.items():
+		# walk through each description for the image
+		for desc in desc_list:
+			# encode the sequence
+			seq = tokenizer.texts_to_sequences([desc])[0]
+			# split one sequence into multiple X,y pairs
+			for i in range(1, len(seq)):
+				# split into input and output pair
+				in_seq, out_seq = seq[:i], seq[i]
+				# pad input sequence
+				in_seq = pad_sequences([in_seq], maxlen=max_length)[0]
+				# encode output sequence
+				out_seq = to_categorical([out_seq], num_classes=vocab_size)[0]
+				# store
+				X1.append(photos[key][0])
+				X2.append(in_seq)
+				y.append(out_seq)
+	return array(X1), array(X2), array(y)
 
-	adam = keras.optimizers.Adam(learning_rate=0.1, beta_1=0.9, beta_2=0.999, amsgrad=False)
+
+def define_model(vocab_size, max_length):
 	# feature extractor model
 	inputs1 = Input(shape=(4096,))
 	fe1 = Dropout(0.5)(inputs1)
@@ -137,59 +167,110 @@ def define_model(vocab_size, max_length):
 	outputs = Dense(vocab_size, activation='softmax')(decoder2)
 	# tie it together [image, seq] [word]
 	model = Model(inputs=[inputs1, inputs2], outputs=outputs)
-	# compile model
-	model.compile(loss='categorical_crossentropy', optimizer=adam)
+	model.compile(loss='categorical_crossentropy', optimizer='adam')
 	# summarize model
-	# model.summary()
+	print(model.summary())
 	plot_model(model, to_file='model.png', show_shapes=True)
 	return model
 
-# data generator, intended to be used in a call to model.fit_generator()
+def word_for_id(integer, tokenizer):
+	"""
+	Mapea la predicción que es un entero 
+	a una palabra del tokenizer
+	"""
+	for word, index in tokenizer.word_index.items():
+		if index == integer:
+			return word
+	return None
+
+def generate_desc(model, tokenizer, photo, max_length):
+	"""
+	Genera una descripcion textual dado un modelo entrenado
+	y una foto preparada como input
+	"""	
+	in_text = 'startseq'	
+	for i in range(max_length):
+		sequence = tokenizer.texts_to_sequences([in_text])[0]
+		sequence = pad_sequences([sequence], maxlen=max_length)
+		yhat = model.predict([photo,sequence], verbose=0)
+		yhat = argmax(yhat)
+		word = word_for_id(yhat, tokenizer)
+		if word is None:
+			break
+		in_text += ' ' + word
+		if word == 'endseq':
+			break
+	return in_text
+
+def evaluate_model(model, descriptions, photos, tokenizer, max_length):
+	"""
+	Métricas del modelo
+	"""
+	actual, predicted = list(), list()
+	# se va a iterar sobre todas las descripciones de prueba
+	for key, desc_list in descriptions.items():
+		# se genera la descipción
+		yhat = generate_desc(model, tokenizer, photos[key], max_length)
+		# se almacena la descripción real y la de predicha por el modelo
+		references = [d.split() for d in desc_list]
+		actual.append(references)
+		predicted.append(yhat.split())
+	# Se calcula el BLUE score
+	print('BLEU-1: %f' % corpus_bleu(actual, predicted, weights=(1.0, 0, 0, 0)))
+	print('BLEU-2: %f' % corpus_bleu(actual, predicted, weights=(0.5, 0.5, 0, 0)))
+	print('BLEU-3: %f' % corpus_bleu(actual, predicted, weights=(0.3, 0.3, 0.3, 0)))
+	print('BLEU-4: %f' % corpus_bleu(actual, predicted, weights=(0.25, 0.25, 0.25, 0.25)))
+
+
 def data_generator(descriptions, photos, tokenizer, max_length, vocab_size):
-	# loop for ever over images
+	"""
+
+	"""
 	while 1:
 		for key, desc_list in descriptions.items():
-			# retrieve the photo feature
 			photo = photos[key][0]
-			in_img, in_seq, out_word = create_sequences(tokenizer, max_length, desc_list, photo, vocab_size)
+			in_img, in_seq, out_word = create_sequences(tokenizer, max_length, 
+														desc_list, photo, 
+														vocab_size)
 			yield [[in_img, in_seq], out_word]
 
-# load training dataset (6K)
-filename = 'C:/Users/atamayop/Desktop/image_caption/data/Flickr_8k.trainImages.txt'
-# filename = '.../data/Flickr_8k.trainImages.txt'
-train = load_set(filename)
-print('Dataset: %d' % len(train))
-# descriptions
-train_descriptions = load_clean_descriptions('C:/Users/atamayop/Desktop/image_caption/src/files/descriptions.txt', train)
-print('Descriptions: train=%d' % len(train_descriptions))
 
-# photo features
-train_features = load_photo_features('C:/Users/atamayop/Desktop/image_caption/src/files/features.pkl', train)
-print('Photos: train=%d' % len(train_features))
+def loading_train_model(model, epochs, train_descriptions, train_features, tokenizer,
+				max_length, vocab_size, val_descriptions, val_features):
+	"""
+	Se entrena el modelo con el datagenerator
+	"""
+	steps = len(train_descriptions)
+	val_steps = len(val_descriptions)
 
-# prepare tokenizer
-tokenizer = create_tokenizer(train_descriptions)
-dump(tokenizer, open('tokenizer.pkl', 'wb'))
+	es = keras.callbacks.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, 
+												patience=2, verbose=0, mode='auto', 
+												baseline=None, restore_best_weights=False)
 
-vocab_size = len(tokenizer.word_index) + 1
-print('Vocabulary Size: %d' % vocab_size)
-# determine the maximum sequence length
-max_length = max_length(train_descriptions)
-print('Description Length: %d' % max_length)
-
-# define the model
-model = define_model(vocab_size, max_length)
-# train the model, run epochs manually and save after each epoch
-epochs = 2
-steps = len(train_descriptions)
+	for i in range(epochs):
+		generator = data_generator(train_descriptions, train_features, 
+								tokenizer, max_length, vocab_size)
+		
+		val_generator = data_generator(val_descriptions, val_features,
+									tokenizer, max_length, vocab_size)
+		model.fit_generator(generator,
+							steps_per_epoch = steps,
+							validation_data = val_generator,
+							validation_steps = val_steps,
+							epochs = 1,  verbose = 1, 
+							callbacks = [es], shuffle = True)
+		model.save('model_' + str(i) + '.h5')
 
 
-es = keras.callbacks.callbacks.EarlyStopping(monitor='val_loss', min_delta=0, patience=2, verbose=0, mode='auto', baseline=None, restore_best_weights=False)
 
-for i in range(epochs):
-	# create the data generator
-	generator = data_generator(train_descriptions, train_features, tokenizer, max_length, vocab_size)
-	# fit for one epoch
-	model.fit_generator(generator, epochs=1, steps_per_epoch=steps, verbose=1, callbacks=[es], shuffle=True)
-	# save model
-	model.save('model_' + str(i) + '.h5')
+def train_model(tokenizer, max_length, train_descriptions, train_features, vocab_size, test_descriptions, test_features):
+	
+	X1train, X2train, ytrain = create_all_sequences(tokenizer, max_length, train_descriptions, train_features, vocab_size)
+	X1test, X2test, ytest = create_all_sequences(tokenizer, max_length, test_descriptions, test_features, vocab_size)
+
+	model = define_model(vocab_size, max_length)
+	# define checkpoint callback
+	filepath = 'model-ep{epoch:03d}-loss{loss:.3f}-val_loss{val_loss:.3f}.h5'
+	checkpoint = keras.callbacks.callbacks.ModelCheckpoint(filepath, monitor='val_loss', verbose=1, save_best_only=True, mode='min')
+	# fit model
+	model.fit([X1train, X2train], ytrain, epochs=20, verbose=1, callbacks=[checkpoint], validation_data=([X1test, X2test], ytest))

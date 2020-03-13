@@ -7,7 +7,7 @@ from keras.preprocessing.image import img_to_array
 from keras.applications.vgg16 import preprocess_input
 
 def extract_features(directory):
-	"""Extrae las características extraídas por el modelo
+	"""Retorna las características extraídas por el modelo
 	   de cada foto en el directorio
 	
 	Arguments:
@@ -40,8 +40,21 @@ def extract_features(directory):
 		print('>%s' % name)
 	return features
 
-if __name__ == "__main__":
-	directory = './data/Flicker8k_Dataset/'
-	features = extract_features(directory)
-	print('Extracted Features: %d' % len(features))
-	dump(features, open('./src/files/features.pkl', 'wb'))
+def extract_feature(filename):
+	"""
+	Retorna las características extraídas por el modelo
+	para una sola foto
+	"""
+	model = VGG16()
+	model.layers.pop()
+	model = Model(inputs=model.inputs, 
+				  outputs=model.layers[-1].output)
+	image = load_img(filename, target_size=(224, 224))
+	image = img_to_array(image)
+	image = image.reshape((1, 
+						   image.shape[0], 
+						   image.shape[1], 
+						   image.shape[2]))
+	image = preprocess_input(image)
+	feature = model.predict(image, verbose=0)
+	return feature
