@@ -30,3 +30,8 @@ En el entrenamiento del modelo podríamos pasar cada imagen que vamos a procesar
 
 Para extraer correctamente las características de la foto se remueve la última capa de la red preentrenada, que sería la parte encargada de la red que hace la clasificación, pero en este problema no estamos interesados en clasificar las imágenes, sino en la interpretación interna de la foto, que es lo que se hace justo antes de clasificarla, allí están las "características" que el modelo ha extraído de la foto.
 
+## 2. Preprocesamiento del texto
+
+El dataset contiene multiples desciptiones por foto y la descripciones requieren algo de limpieza,así que se pasa todo minusculas, quitar puntuaciones, palabras de una sola letras, palabras con numeros dentro de ellas, entonces una vez ya hemos limpiado el vocabulario, podemos resumir el tamaño del vocabulario, lo ideal es que el vocabulario que tenemos sea tan expresivo y pequeño como sea posible, un vocabulario pequeño resultará en un modelo más pequeño que entrenaremos más rápido
+
+Guardamos un diccionario de las descripciones de cada imagen por identificador de cada imagen en un archivo llamado description.txt, con un identificador y descripción por línea
