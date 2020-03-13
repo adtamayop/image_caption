@@ -1,0 +1,244 @@
+The Image Caption:
+
+It requires both methods from computer vision to understand the content of the image and a language model from the field of natural language processing to turn the understanding of the image into words in the right order
+ 
+ The problem of image caption generation involves outputting a readable and concise description of the contents of a photograph.
+------------------------------------------------------------------------------------------
+
+Dataset:
+Flickr8K dataset
+
+ consisting of 8,000 images that are each paired with five different captions which provide clear descriptions of the salient entities and events.
+
+Flickr8k_Dataset: Contains 8092 photographs in JPEG format.
+Flickr8k_text: Contains a number of files containing different sources of descriptions for the photographs.
+
+The dataset has a pre-defined training dataset (6,000 images), 
+                           development dataset (1,000 images)
+                                  test dataset (1,000 images).
+
+Una métrica para medir el performance del modelo es: BLEU scores
+
+-------------------------------------------------------------------------------------
+
+Preparación de los datos:
+
+Preparar imagenes:
+
+We will use a pre-trained model to interpret the content of the photos. en este caso el VGG
+
+Nosotros en el modelo podríamos pasar cada imagen que vamos a procesar por el modelo preentrenado
+y unirla a la arquitectura de image caption que se va a proponer más adelante, pero para ahorrar tiempo
+y recursos podemos pre calcular las "photo features" usando el modelo preentrenado y guardar estas interpretaciones por el modelo en un archivo y luego cargarlas, para meter esa interpretacion a nuestro modelo, que sería lo mismo que por cada imagen pasarla por el modelo VGG solo que lo haremos de forma anticipada, esto hará el modelo más rápido y consumirá mucha menos memoria 
+
+Entonces lo que se hará es remover la última capa de la red preentrenada, que sería la parte encargada de la red que hace la clasificación, pero en este problema no estamos interesados en clasificar las imagenes, sino en la interpretación interna de la foto, que es lo que se hace justo antes de clasificarla, allí están las "características" que el modelo ha extraído de la foto
+
+ extract_features() that, given a directory name, will load each photo, prepare it for VGG, and collect the predicted features from the VGG model. The image features are a 1-dimensional 4,096 element vector.
+
+--------------------------------------------------------------------------------------
+
+Preparar text:
+
+El dataset contiene multiples desciptiones por foto y la descripciones requieren algo de limpieza 
+
+cada foto tiene un identificador único, y el identificador es usado en el nombre de la foto y el archivo de texto de las descripciones
+
+Creamos un diccionario donde la clave es el id de la imagen y el valor es una lista con todas las descripciones
+
+Ahora lo que sigue es limpiar el texto, todo a minusculkas, quitar punturaciones, palabras de una sola letras, palabras con numeros dentro de ellas
+
+entonces una vez ya hemos limpiado el vocabulario, podemos resumir el tamaño del vocabulario, lo ideal es que el vocabilario que tenemos sea tan expresivo y pequeño como sea posible, un vocabulario pequieño resultará en un modelo más pequeño que entrenaremos más rápido
+
+to_vocabulary coge las descrpciopnes de cada clave de las descripciones y las parte, y las mete en un conjunto único 
+
+y luego podemos guardar el diccionario de las descripciones de cada imagen por identificador de cada imagen en un archivo llamado description .txt, con un identificador y descripción por linea
+
+
+-------------------------------------------------------------------------------------
+
+
+Desarrollar el modelo de deep learning:
+    Loading Data.
+    Defining the Model.
+    Fitting the Model.
+    Complete Example.
+
+Cargamos los datos:
+
+primero debemos cargar la foto preparada y el texto para entrenar el modelo, vamos a usar todas las fotos y las descriptiones, y mientras entrenamos vamos a a monitorear el rendimiento del modelo con el dataset desarrolla y usaremos este performance para saber cuando guardar el modelo
+
+El dataset de entrenamiento y de prueba han sido predefinidos en los archivos Flickr_8k.trainImages.txt and Flickr_8k.devImages.txt, estos archivos contienen la lista con los nombres de fotos, con esos identificadores filtramos las fotos que necesitamos 
+
+
+ load_clean_descriptions() 
+ carga las descripciones limpias del archivo desscriptions.txt para un conjunto de identificadores dado, y devuelve un diccionario de identificadores que lista las descripciones del texto.
+ 
+el modelo que desarrollaremos generara una descripcion dada una foto, y la descripcion sera generada una palabra al tiempo, la secuencia de palabras previamente generadas será dada como entrada, por lo tanto necesiatremos como una "primera palabra" para darle como ignición  o padata inicial al proceso de generación y una última palabra para darle la señal de que termine la descripcion
+
+Entonces se van a usar las palabras 'startseq' y 'endseq' para esto, entonces estas palabras claves, se van a añadir a las descripciones limpias cargadas, y es importante hacer esto antes de codificar el texto, para que estos tokens sean convertidos correctamente.
+
+load_photo_features() that loads the entire set of photo descriptions, then returns the subset of interest for a given set of photo identifiers.
+
+------------------------------------------------------------
+
+La descripción del texto necesitará ser codificado a numeros antes de ser pasado al modelo como entrada o comparado con las predicciones del modelo
+
+Entonces el primer paso es codificar los datos, y es crear un mapeo consistente de las palabras a valores enteros, con keras podemos utilizar la clase Tokenizer que puede aprender este mapeo de los datos rechazados
+
+Entonces ya con los datos codificados 
+
+Cada descripción va a ser partida en palabras, el modelo va a proveer una palabra y la foto, y el modelo va a generar la siguiente palabra, entonces las 2 primeras palabras de la descripción, se le va a volver a pasar como entrada al modelo para generar la siguiente palabra, y así es como el modelo va a ser entrenado 
+
+Entonces por ejemplo la secuencia de entrada “little girl running in field” 
+va a ser partida en 6 momentos de entrada y salida para entrenar el modelo
+
+X1,		X2 (text sequence), 						y (word)
+photo	startseq, 									little
+photo	startseq, little,							girl
+photo	startseq, little, girl, 					running
+photo	startseq, little, girl, running, 			in
+photo	startseq, little, girl, running, in, 		field
+photo	startseq, little, girl, running, in, field, endseq
+
+
+Entonces cuando el modelo sea usado para generar descripciones, las palabras generadas serán concatenadas, y recursivamente serán utilizadas como entrada para generar una descripción para cada imagen.
+
+la función create_sequences(), dado un tokenizer, una tamaño máximo de secuencia, y el diccionario
+de todas las descripciones y fotos, esto transformará los datos, a pares de entrada y salida para 
+entrenar el modelo.
+
+Entonces hay 2 arrays de entrada al modelo, uno para las features de las fotos, y otra para el texto codificado, hay una salida para el modelo la cual es una palabra codificada que es la siguiente palabra de la secuencia
+
+El texto de entrada es codificado como entero, el cual será alimentado a una capa "word embedding"
+Las características de la foto será alimandas directamente a otra parte del modelo, el modelo sacará una predicción la cual es una distribución de probabilidad sobre todas las palabras del vocabulario, 
+
+Los datos de salida será por lo tanto un one-hot encoded del vocabulario, de cada palabra, representando una probabilidad de distribution idealizada con valores de 0 para todas las posiciones de palabras, excepto la palabra 
+
+Necesitaremos calcular el numero máximo de palabras en una descripcion,
+
+La encoder-decoder recurrent neural network architecture se estudiado que sirve mucho para este tipo de problemas, 
+
+The implementation of this architecture can be distilled into inject and merge based models, and both make different assumptions about the role of the recurrent neural network in addressing the problem.
+
+entonces ya tenemos las clases y métodos para cargada los datos para el entrenamiento y validación, y transformarlos a supervisados para entrenar el modelo 
+
+----------------------------------------------------------------------------------------------------
+
+Arquitectura encoder decoder
+
+Se va a utilizar un modelo llamado el "merge model" que lo propuso un man muy teso, marc tanti,  
+
+
+This involves two elements:
+
+    Encoder: Una red que lee la fotografía y codifica el contenido en un fector de tamaño fijo, usando una representación interna
+    
+    Decoder: Una red que lee la fotografía codificada y generada la description
+
+Normalmente lo que se hace es coger una red convolucional para codificar la imagen y una red recurrente como una LSTM por ejm, para bien sea codificar la secuencia de entrada y/o generar la siguiente palabra en la secuencia 
+
+Entonces para el problema de la red convolucional se usa una transfer learning de una red ya preentrenada en un problema de clasificación robusto de imagenes para codificar la foto, y el modelo preentrenado se carga
+
+https://3qeqpr26caki16dnhd19sv6by6v-wpengine.netdna-ssl.com/wp-content/uploads/2017/10/Recursive-Framing-of-the-Caption-Generation-Model.png
+
+Entonces el problema puede ser enfrentado de dos formas, una es inyección y la ofra fusión o merge
+
+
+
+The inject:
+
+El modelo de inyección combina la forma codificada de la imagen con cada palabra de la descripción de texto generada hasta el momento.
+
+El enfoque utiliza la red neuronal recurrente como un modelo de generación de texto que utiliza una secuencia de información de imagen y palabra como entrada para generar la siguiente palabra en la secuencia.
+
+https://3qeqpr26caki16dnhd19sv6by6v-wpengine.netdna-ssl.com/wp-content/uploads/2017/10/Inject-Architecture-for-Encoder-Decoder-Model.png
+
+Este modelo combina las featuress de la imagen con cada palabra de entrada, lo que requiere que el codificador desarrolle una codificación que incorpore información visual y lingüística juntas.
+
+The merge Model:
+
+El modelo de merge combina la forma codificada de la imagen de entrada con la forma codificada de la descripción de texto generada hasta ahora.
+
+La combinación de estas dos entradas codificadas es utilizada por un modelo de decodificador muy simple para generar la siguiente palabra en la secuencia.
+
+El enfoque utiliza la red neuronal recurrente solo para codificar el texto generado hasta ahora.
+
+https://3qeqpr26caki16dnhd19sv6by6v-wpengine.netdna-ssl.com/wp-content/uploads/2017/10/Merge-Architecture-for-the-Encoder-Decoder-Model.png
+
+
+Esto separa los features de la entrada de imagen, la entrada de texto y la combinación e interpretación de las entradas codificadas.
+
+Como se mencionó, es común usar un modelo previamente entrenado para codificar la imagen, pero de manera similar, esta arquitectura también permite usar un modelo de lenguaje previamente entrenado para codificar la entrada de texto de subtítulos.
+
+Se podrían concatenar, multiplicar, sumar, entre otras formas, pero el autor encontró que la forma con el merge es la más efectiva 
+
+
+El éxito del modelo de fusión para la arquitectura codificador-decodificador sugiere que el papel de la red neuronal recurrente es codificar la entrada en lugar de generar la salida.
+
+Esta es una desviación del entendimiento común donde se cree que la contribución de la red neuronal recurrente es la de un modelo generativo.
+
+El modelo se puede describir en 3 partes:
+
+
+* El extractor de características de la foto: en este caso la VGG16 sin la capa de salida
+* El procesador de secuencias: Esta es una capa de  word embedding (n dónde las palabras o frases del vocabulario son vinculadas a vectores de números reales) para manipular el texto de entrada seguida por una lstm 
+* Decoder, el extractor y el procesador sacan un vector de tamaño fijo, estos son combinados y procesador por una red densa para hacer una predicción final
+
+
+El modelo Photo Feature Extractor espera que las características de entrada de fotos sean un vector de 4.096 elementos. Estos son procesados por una capa densa para producir una representación de 256 elementos de la foto.
+
+El modelo del procesador de secuencia espera secuencias de entrada con una longitud predefinida (34 palabras) que se introducen en una capa de embedding que utiliza una máscara para ignorar los valores rellenados. Esto es seguido por una capa LSTM con 256 neuronas.
+
+Ambos modelos de entrada producen un vector de 256 elementos. Además, ambos modelos de entrada utilizan la regularización Dropout 50%. Esto es para reducir el sobreajuste del conjunto de datos de entrenamiento, ya que esta configuración de modelo aprende muy rápido.
+
+El modelo Decoder combina los vectores de ambos modelos de entrada utilizando una operación de suma. Esto luego se alimenta a una capa de neuronas 256 densas y luego a una capa densa de salida final que hace una predicción softmax sobre todo el vocabulario de salida para la siguiente palabra en la secuencia.
+
+--------------------------------------------------------------------------------------------------
+
+Entrenamiento del modelo:
+
+Una vez definido el modelo, podemos entrenarlo en el dataset de entrenamiento
+
+Este modelo aprende muy rápido, entonces se va a ir monitoreando su aprendizaje y ajuste con los datos de validación, entonces cuando el performance del modelo con los datos de validación vayan mejorando al final de una época, se va a guardar todo el modelo en un archivo, entonces al final del entrenamiento vamos a poder tener el modelo con el mejor rendimiento en el daataset de entrenamiento
+
+Podemos hacer esto definiendo un ModelCheckpoint en Keras y especificándolo para monitorear la pérdida mínima en el conjunto de datos de validación y guardar el modelo en un archivo que tenga tanto la capacitación como la pérdida de validación en el nombre del archivo.
+
+Si nuestro equipo muere entrenando este modelo, podemos usar lo que se llama una carga progresiva,para entrenar el modelo, entonces lo primero que hacemos es generar una función que usaremos como generadora de datos 
+
+entrenamos................................
+
+
+
+--------------------------------------------------------------------------------------------------
+
+Evaluamos el modelo:
+
+Una vez entrenamos el modelo, podemos meterle nuestro dataset de prueba
+
+Entonces lo primero es evaluar el modelo generando las descripciones para todas las fotos en el dataset de rpuebas y evaluando esas predicciones con una función de costo estandar, entonces lo primero es genrar la descripcion de la foto con el modelo entrenado.
+
+Entonces esto implica pasarle la palabra reservada para iniciar la descripción: "startseq", generando una palbra, entonces llamamos recursivamente el modelo con las palabras generadas hasta que alcancemos el fin de la secuencia con la palabra 'endseq' o el máximo de palabras que puede alcanzar una descripción.
+
+Las descripciones reales y pronosticadas se recopilan y evalúan colectivamente utilizando la puntuación BLEU del corpus que resume lo cerca que está el texto generado del texto esperado.
+
+BLEU scores are used in text translation for evaluating translated text against one or more reference translations.
+
+Here, we compare each generated description against all of the reference descriptions for the photograph. We then calculate BLEU scores for 1, 2, 3 and 4 cumulative n-grams.
+
+A higher score close to 1.0 is better, a score closer to zero is worse.
+
+Primero necesitamos cargar el conjunto de datos de entrenamiento para preparar un Tokenizer para que podamos codificar las palabras generadas como secuencias de entrada para el modelo. Es fundamental que codifiquemos las palabras generadas utilizando exactamente el mismo esquema de codificación que se utilizó al entrenar el modelo.
+
+Podemos codificar la longitud máxima de secuencia. Con la codificación de texto, podemos crear el tokenizador y guardarlo en un archivo para poder cargarlo rápidamente cuando lo necesitemos sin necesidad de todo el conjunto de datos Flickr8K. Una alternativa sería utilizar nuestro propio archivo de vocabulario y mapeo a la función de enteros durante el entrenamiento.
+
+
+----
+Para generar...............
+
+Download the photograph and save it to your local directory with the filename “example.jpg“.
+
+First, we must load the Tokenizer from tokenizer.pkl and define the maximum length of the sequence to generate, needed for padding inputs.
+
+A continuación, debemos cargar la foto que describimos y extraer las características.
+
+Podríamos hacer esto redefiniendo el modelo y agregando el modelo VGG-16, o podemos usar el modelo VGG para predecir las características y usarlas como entradas para nuestro modelo existente. Haremos lo último y utilizaremos una versión modificada de la función extract_features () utilizada durante la preparación de datos, pero adaptada para trabajar en una sola foto.
